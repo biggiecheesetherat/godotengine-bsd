@@ -1,0 +1,72 @@
+name: Scheduled Auto-Build from Upstream Godot Tags
+
+on:
+  schedule:
+    - cron: '0 */12 * * *' # Automatically scans the official Godot repository every 12 hours
+  workflow_dispatch: # Keeps a manual button active on your GitHub dashboard just in case
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Fetch Latest Tag
+      id: godot_tag
+      run: |
+        # Polls the official GitHub API for the absolute latest version tag name
+        LATEST_TAG=$(curl -s https://github.com | jq -r '.tag_name')
+        echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
+        echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+        echo "Found upstream stable version: $LATEST_TAG"
+
+    - name: Compare Local Cache
+      id: check_release
+      run: |
+        # Looks at your local repository to prevent wasting resources rebuilding old version tags
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://github.com{{ github.repository }}/releases/tags/${{ env.LATEST_TAG }})
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "EXISTS=true" >> $GITHUB_ENV
+          echo "Version ${{ env.LATEST_TAG }} already exists in this repository. Skipping compilation."
+        else
+          echo "EXISTS=false" >> $GITHUB_ENV
+        fi
+
+    - name: Compile
+      if: env.EXISTS == 'false' # Only runs if this specific version tag hasn't been built yet
+      uses: vmactions/freebsd-vm@v1
+      with:
+        usesh: true
+        sync: rsync
+        prepare: |
+          pkg update -f
+          pkg install -y scons pkgconf xorg-libraries libxcursor libxi libxinerama libxrandr libxrender alsa-lib pulseaudio mesa-libs libtheora libvorbis
+        run: |
+          # Fetch the source tarball dynamically matching the discovered upstream version tag
+          curl -L -o godot-source.tar.gz https://github.com{{ env.LATEST_TAG }}.tar.gz
+          tar -xf godot-source.tar.gz
+          cd godot-${{ env.LATEST_TAG }}
+
+          # Custom low-RAM profile optimization tailored for the 2011 Sony Vaio display architecture
+          scons platform=linuxbsd target=editor arch=x86_64 builtin_vulkan=no optimize=size debug_symbols=no -j$(sysctl -n hw.ncpu)
+          
+          cd bin
+          tar -czf ../../godot-freebsd-opengl3.tar.gz godot.linuxbsd.editor.x86_64
+
+    - name: Push to GH Release
+      if: env.EXISTS == 'false'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.LATEST_TAG }} # Locks the release tag exactly to Godot's upstream release name
+        files: godot-freebsd-opengl3.tar.gz
+        name: Godot ${{ env.LATEST_TAG }} FreeBSD (Lightweight Build)
+        body: |
+          For changelogs, please read the godot-engine changelog: https://github.com/godotengine/godot/releases
+          
+          **Execution Note:** Launch via terminal using `--rendering-driver opengl3` on legacy laptops!
+        draft: false
+        prerelease: false
