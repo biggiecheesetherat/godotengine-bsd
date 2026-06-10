@@ -1,9 +1,9 @@
-name: Build
+name: Scheduled Auto-Build via Git Clone
 
 on:
   schedule:
-    - cron: '0 */12 * * *' # Automatically scans the official Godot repository every 12 hours
-  workflow_dispatch: # Keeps a manual button active on your GitHub dashboard just in case
+    - cron: '0 */12 * * *' # Automatically scans every 12 hours
+  workflow_dispatch: # Keeps the manual play button active
 
 jobs:
   check-and-build:
@@ -12,50 +12,70 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout Code
+    - name: Checkout Your Repository
       uses: actions/checkout@v4
 
-    - name: Fetch Latest Tag
-      id: godot_tag
+    - name: Get Latest Upstream Stable Tag via Git
+      id: fetch_tag
       run: |
-        # Correctly queries the official JSON REST API for the Godot repository
-        LATEST_TAG=$(curl -s https://github.com | jq -r '.tag_name')
+        # Clones only the tag tracking metadata from the official repo
+        git clone --dry-run --tags https://github.com upstream_tags
+        cd upstream_tags
+        
+        # Filters out alpha/beta/rc snapshots and grabs the highest stable version tag
+        LATEST_TAG=$(git tag -l | grep "-stable" | sort -V | tail -n 1)
+        
         echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
-        echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
         echo "Found upstream stable version: $LATEST_TAG"
 
-    - name: Compare Local Cache
+    - name: Check for Pre-existing Release
       id: check_release
       run: |
-        # Looks at your local repository to prevent wasting resources rebuilding old version tags
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://github.com{{ github.repository }}/releases/tags/${{ env.LATEST_TAG }})
         if [ "$HTTP_STATUS" = "200" ]; then
           echo "EXISTS=true" >> $GITHUB_ENV
-          echo "Version ${{ env.LATEST_TAG }} already exists in this repository. Skipping compilation."
+          echo "Version ${{ env.LATEST_TAG }} already exists. Skipping build."
         else
           echo "EXISTS=false" >> $GITHUB_ENV
         fi
 
-    - name: Compile
-      if: env.EXISTS == 'false' # Only runs if this specific version tag hasn't been built yet
+    - name: Compile Godot inside FreeBSD VM
+      if: env.EXISTS == 'false'
       uses: vmactions/freebsd-vm@v1
       with:
         usesh: true
         sync: rsync
         prepare: |
           pkg update -f
-          pkg install -y scons pkgconf xorg-libraries libxcursor libxi libxinerama libxrandr libxrender alsa-lib pulseaudio mesa-libs libtheora libvorbis
+          pkg install -y scons pkgconf xorg-libraries libxcursor libxi libxinerama libxrandr libxrender alsa-lib pulseaudio mesa-libs libtheora libvorbis git
         run: |
-          # Fetch the source tarball dynamically matching the discovered upstream version tag
-          curl -L -o godot-source.tar.gz https://github.com{{ env.LATEST_TAG }}.tar.gz
-          tar -xf godot-source.tar.gz
-          cd godot-${{ env.LATEST_TAG }}
+          # Shallow clone the exact version tag branch inside the FreeBSD environment
+          git clone --depth 1 --branch ${{ env.LATEST_TAG }} https://github.com godot-src
+          cd godot-src
 
-          # Custom low-RAM profile optimization tailored for the 2011 Sony Vaio display architecture
+          # Low-RAM profile flags optimized to run smoothly on a 2011 Sony Vaio
           scons platform=linuxbsd target=editor arch=x86_64 builtin_vulkan=no optimize=size debug_symbols=no -j$(sysctl -n hw.ncpu)
           
           cd bin
           tar -czf ../../godot-freebsd-opengl3.tar.gz godot.linuxbsd.editor.x86_64
+
+    - name: Deploy Release File
+      if: env.EXISTS == 'false'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.LATEST_TAG }}
+        files: godot-freebsd-opengl3.tar.gz
+        name: Godot ${{ env.LATEST_TAG }} FreeBSD (Sony Vaio Build)
+        body: |
+          Automated compile tracking official upstream stable tags.
+          
+          ### Engine Details
+          * Source Code: Tag `${{ env.LATEST_TAG }}`
+          * Rendering Fallback: Vulkan modules skipped (`builtin_vulkan=no`)
+          
+          **Launch Command:** Fire up from your desktop shell using `--rendering-driver opengl3`.
+        draft: false
+        prerelease: false
 
     - name: Push to GH Release
       if: env.EXISTS == 'false'
