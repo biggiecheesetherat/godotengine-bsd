@@ -1,4 +1,4 @@
-name: Scheduled Auto-Build from Upstream Godot Tags
+name: Build
 
 on:
   schedule:
@@ -18,7 +18,7 @@ jobs:
     - name: Fetch Latest Tag
       id: godot_tag
       run: |
-        # Polls the official GitHub API for the absolute latest version tag name
+        # Correctly queries the official JSON REST API for the Godot repository
         LATEST_TAG=$(curl -s https://github.com | jq -r '.tag_name')
         echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
         echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
