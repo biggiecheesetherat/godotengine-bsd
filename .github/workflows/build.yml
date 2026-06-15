@@ -15,32 +15,7 @@ jobs:
     - name: Checkout Your Repository
       uses: actions/checkout@v4
 
-    - name: Get Latest Upstream Stable Tag via Git
-      id: fetch_tag
-      run: |
-        # Clones only the tag tracking metadata from the official repo
-        git clone --tags https://github.com/godotengine/godot upstream_tags
-        cd upstream_tags
-        
-        # Filters out alpha/beta/rc snapshots and grabs the highest stable version tag
-        LATEST_TAG=$(git tag -l | grep "-stable" | sort -V | tail -n 1)
-        
-        echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
-        echo "Found upstream stable version: $LATEST_TAG"
-
-    - name: Check for Pre-existing Release
-      id: check_release
-      run: |
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://github.com{{ github.repository }}/releases/tags/${{ env.LATEST_TAG }})
-        if [ "$HTTP_STATUS" = "200" ]; then
-          echo "EXISTS=true" >> $GITHUB_ENV
-          echo "Version ${{ env.LATEST_TAG }} already exists. Skipping build."
-        else
-          echo "EXISTS=false" >> $GITHUB_ENV
-        fi
-
     - name: Compile Godot inside FreeBSD VM
-      if: env.EXISTS == 'false'
       uses: vmactions/freebsd-vm@v1
       with:
         usesh: true
@@ -50,7 +25,7 @@ jobs:
           pkg install -y scons pkgconf xorg-libraries libxcursor libxi libxinerama libxrandr libxrender alsa-lib pulseaudio mesa-libs libtheora libvorbis git
         run: |
           # Shallow clone the exact version tag branch inside the FreeBSD environment
-          git clone --depth 1 --branch ${{ env.LATEST_TAG }} https://github.com/godotengine/godot godot-src
+          git clone --depth 1 --branch master https://github.com/godotengine/godot godot-src
           cd godot-src
 
           # Low-RAM profile flags optimized to run smoothly on a 2011 Sony Vaio
@@ -60,17 +35,14 @@ jobs:
           tar -czf ../../godot-freebsd-opengl3.tar.gz godot.linuxbsd.editor.x86_64
 
     - name: Deploy Release File
-      if: env.EXISTS == 'false'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{ env.LATEST_TAG }}
+        tag_name: master
         files: godot-freebsd-opengl3.tar.gz
-        name: Godot ${{ env.LATEST_TAG }} FreeBSD (Sony Vaio Build)
+        name: Godot Engine for FreeBSD 
         body: |
-          Automated compile tracking official upstream stable tags.
-          
           ### Engine Details
-          * Source Code: Tag `${{ env.LATEST_TAG }}`
+          * Source Code: Compiled from master tree
           * Rendering Fallback: Vulkan modules skipped (`builtin_vulkan=no`)
           
           **Launch Command:** Fire up from your desktop shell using `--rendering-driver opengl3`.
@@ -78,12 +50,11 @@ jobs:
         prerelease: false
 
     - name: Push to GH Release
-      if: env.EXISTS == 'false'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{ env.LATEST_TAG }} # Locks the release tag exactly to Godot's upstream release name
+        tag_name: master
         files: godot-freebsd-opengl3.tar.gz
-        name: Godot ${{ env.LATEST_TAG }} FreeBSD (Lightweight Build)
+        name: Godot Engine for FreeBSD
         body: |
           For changelogs, please read the godot-engine changelog: https://github.com/godotengine/godot/releases
           
