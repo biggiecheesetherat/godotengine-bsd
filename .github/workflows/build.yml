@@ -19,7 +19,7 @@ jobs:
       id: fetch_tag
       run: |
         # Clones only the tag tracking metadata from the official repo
-        git clone --dry-run --tags https://github.com upstream_tags
+        git clone --tags https://github.com/godotengine/godot upstream_tags
         cd upstream_tags
         
         # Filters out alpha/beta/rc snapshots and grabs the highest stable version tag
@@ -50,7 +50,7 @@ jobs:
           pkg install -y scons pkgconf xorg-libraries libxcursor libxi libxinerama libxrandr libxrender alsa-lib pulseaudio mesa-libs libtheora libvorbis git
         run: |
           # Shallow clone the exact version tag branch inside the FreeBSD environment
-          git clone --depth 1 --branch ${{ env.LATEST_TAG }} https://github.com godot-src
+          git clone --depth 1 --branch ${{ env.LATEST_TAG }} https://github.com/godotengine/godot godot-src
           cd godot-src
 
           # Low-RAM profile flags optimized to run smoothly on a 2011 Sony Vaio
